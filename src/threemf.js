@@ -5,7 +5,7 @@ import {zipSync, strToU8} from 'fflate'
 const esc = t => String(t).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]))
 const XML = '<?xml version="1.0" encoding="UTF-8"?>\n'
 
-export function build3mf(objects) {
+export function build3mf(objects, projectConfig = {}) {
   const model = [XML + '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
     '<metadata name="Application">pcb-tape-plates</metadata>', '<resources>']
   const cfg = [XML + '<config>']
@@ -49,6 +49,8 @@ export function build3mf(objects) {
     '3D/3dmodel.model': strToU8(model.join('\n')),
     'Metadata/Slic3r_PE_model.config': strToU8(cfg.join('\n')),
   }
+  // global print settings (e.g. first_layer_height) travel in the project config, same format as PrusaSlicer writes
+  if (Object.keys(projectConfig).length) files['Metadata/Slic3r_PE.config'] = strToU8(Object.entries(projectConfig).map(([k, v]) => `; ${k} = ${v}`).join('\n') + '\n')
   if (rng.length > 2) files['Metadata/Prusa_Slicer_layer_config_ranges.xml'] = strToU8(rng.join('\n'))
   return new Blob([zipSync(files, {level: 6})], {type: 'model/3mf'})
 }

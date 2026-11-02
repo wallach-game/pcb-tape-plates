@@ -5,7 +5,7 @@ import {OrbitControls} from 'three/examples/jsm/controls/OrbitControls.js'
 import {gerberToCrossSection} from './gerber.js'
 import {parseExcellon} from './excellon.js'
 import {unzipSync, strFromU8} from 'fflate'
-import {buildPlate, DEFAULT_PARAMS, toBinaryStl} from './plate.js'
+import {buildPlate, DEFAULT_PARAMS, effectiveGrooveDepth, toBinaryStl} from './plate.js'
 import {build3mf} from './threemf.js'
 
 const examples = {
@@ -15,8 +15,8 @@ const examples = {
 
 const $ = id => document.getElementById(id)
 const PARAM_UI = [
-  ['trackHeight_mm', 'Track height (mm)', 0.05],
-  ['plateThickness_mm', 'Plate thickness (mm)', 0.1],
+  ['trackHeight_mm', 'Track height (mm)', 0.06],
+  ['plateThickness_mm', 'Plate thickness (mm)', 0.06],
   ['grooveOffset_mm', 'Groove offset from copper (mm)', 0.05],
   ['grooveWidthTop_mm', 'Groove width at top (mm)', 0.05],
   ['grooveDepth_mm', 'Groove depth (mm)', 0.05],
@@ -193,6 +193,12 @@ function regenerate() {
     if (!bounds) { addWarn('No copper found.', true); draw2d(); update3d(); return }
     const rd = params.registrationPinDiameter_mm
     if (rd > 0 && params.boardMargin_mm < rd + params.registrationClearance_mm + 1.5) addWarn('Board margin is too small for the registration pins; increase it or reduce the pin diameter.')
+    {
+      const T = params.plateThickness_mm, h = params.trackHeight_mm, f = params.layerHeightFine_mm
+      const aligned = (v, step) => Math.abs(v / step - Math.round(v / step)) < 0.02
+      if (!aligned(h, f)) addWarn(`Track height ${h} mm is not a multiple of the fine layer height ${f} mm; the slicer will round it.`)
+      if (!aligned(T, params.layerHeightBase_mm)) addWarn(`Plate thickness ${T} mm is not a multiple of the body layer height ${params.layerHeightBase_mm} mm.`)
+    }
     const holes = []
     for (const f of files.filter(x => x.type === 'drill')) {
       const r = parseExcellonCached(f)
@@ -445,13 +451,13 @@ function export3mf() {
   const {Manifold} = M
   const items = []
   const T = params.plateThickness_mm, h = params.trackHeight_mm
-  const grooveD = Math.min(params.grooveDepth_mm, T - 0.4)
+  const grooveD = effectiveGrooveDepth(params)
   const base = n => n.replace(/\.[^.]+$/, '')
   // solid band below zoneTop (so the tracks/groove never sit over sparse infill), then fine layers up to the track tops
   const zoneRanges = (zoneTop, fineThickness) => {
     const z = params.solidZone_mm, top = zoneTop + fineThickness
     const r = []
-    if (z > 0) r.push({min: Math.max(0, zoneTop - z), max: zoneTop, options: {fill_density: '100%'}})
+    if (z > 0) r.push({min: Math.max(0, zoneTop - z), max: zoneTop, options: {layer_height: params.layerHeightBase_mm, fill_density: '100%'}})
     r.push({min: zoneTop, max: top, options: {layer_height: params.layerHeightFine_mm, fill_density: '100%'}})
     return r
   }

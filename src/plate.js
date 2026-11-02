@@ -1,7 +1,7 @@
 // Plate geometry with manifold-3d. All lengths in mm.
 export const DEFAULT_PARAMS = {
-  trackHeight_mm: 0.2,
-  plateThickness_mm: 1.5,
+  trackHeight_mm: 0.18,
+  plateThickness_mm: 0.12, // thin on purpose: plates are stacked into a multilayer board
   grooveOffset_mm: 0.1,
   grooveWidthTop_mm: 0.5,
   grooveDepth_mm: 0.4,
@@ -14,8 +14,8 @@ export const DEFAULT_PARAMS = {
   registrationClearance_mm: 0.2,
   plateSpacing_mm: 5,
   bedSize_mm: 220,
-  layerHeightBase_mm: 0.2,
-  layerHeightFine_mm: 0.05,
+  layerHeightBase_mm: 0.06,
+  layerHeightFine_mm: 0.06,
   infillPercent: 15,
   solidZone_mm: 0.8, // fully solid band under the tracks/groove so thin tracks never print over sparse infill
   infillPattern: 'gyroid',
@@ -23,6 +23,12 @@ export const DEFAULT_PARAMS = {
 }
 
 const CIRCLE_SEGMENTS = 32
+
+/** Groove depth actually used: never cuts through the plate (leaves at least half of a thin plate, max 0.4 mm). */
+export function effectiveGrooveDepth(p) {
+  const floor = Math.min(0.4, p.plateThickness_mm / 2)
+  return Math.max(0, Math.min(p.grooveDepth_mm, p.plateThickness_mm - floor))
+}
 
 /** Groove ring at a given depth: centered at c from the copper edge, half-width h. */
 function ringAt(M, copper, c, h) {
@@ -52,7 +58,7 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
     solid = solid.add(copper.extrude(p.trackHeight_mm).translate([0, 0, T]))
 
     // V-groove: stepped approximation, ~0.1 mm per step, each step a ring whose width shrinks with depth.
-    const W = p.grooveWidthTop_mm, D = Math.min(p.grooveDepth_mm, T - 0.4)
+    const W = p.grooveWidthTop_mm, D = effectiveGrooveDepth(p)
     const c = p.grooveOffset_mm + W / 2
     const steps = Math.max(2, Math.round(D / 0.1))
     const tip = Math.max(0.01, p.grooveTipWidth_mm / 2)
