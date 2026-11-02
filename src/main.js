@@ -3,6 +3,7 @@ import wasmUrl from 'manifold-3d/manifold.wasm?url'
 import * as THREE from 'three'
 import {OrbitControls} from 'three/examples/jsm/controls/OrbitControls.js'
 import {gerberToCrossSection} from './gerber.js'
+import {parseExcellon} from './excellon.js'
 import {buildPlate, DEFAULT_PARAMS, toBinaryStl} from './plate.js'
 
 const examples = {
@@ -19,6 +20,7 @@ const PARAM_UI = [
   ['grooveDepth_mm', 'Groove depth (mm)', 0.05],
   ['grooveTipWidth_mm', 'Groove tip width (mm)', 0.05],
   ['boardMargin_mm', 'Board margin (mm)', 1],
+  ['minViaHole_mm', 'Minimum hole diameter (mm)', 0.1],
 ]
 const STORE_KEY = 'pcbtape.params.v1'
 
@@ -48,7 +50,7 @@ async function addFiles(list) {
     files = files.filter(x => x.name !== f.name)
     files.push({name: f.name, text, type: detectType(f.name), mirror: isBottom(f.name)})
   }
-  const rank = f => (f.type !== 'copper' ? 3 : isBottom(f.name) ? 2 : /.gd+$|ind/i.test(f.name) ? 1 : 0)
+  const rank = f => (f.type !== 'copper' ? 3 : isBottom(f.name) ? 2 : /\.g\d+$|in\d/i.test(f.name) ? 1 : 0)
   files.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
   if (!files.includes(selected)) {
     selected = firstCopper()
@@ -80,11 +82,6 @@ function renderLayers() {
       renderLayers(); regenerate()
     }
     li.append(radio, name, sel)
-    ul.append(li)
-  }
-  if (files.some(f => f.type === 'drill')) {
-    const li = document.createElement('li'); li.className = 'muted'
-    li.textContent = 'Drill files are not used yet (planned for 0.0.2); holes are not cut.'
     ul.append(li)
   }
 }
@@ -132,7 +129,7 @@ function regenerate() {
   for (const r of results.values()) r.manifold.delete()
   results.clear(); result = null
   const coppers = files.filter(f => f.type === 'copper')
-  if (!M || !selected || !coppers.length) { draw2d(); update3d(); return }
+  if (!M || !selected || !coppers.length) { renderStackup([], []); draw2d(); update3d(); return }
   try {
     const parsed = coppers.map(f => ({f, ...parseCached(f)}))
     parsed.forEach(({f, warnings}) => warnings.forEach(w => addWarn((coppers.length > 1 ? f.name + ': ' : '') + w)))
@@ -149,9 +146,14 @@ function regenerate() {
       }
     }
     if (!bounds) { addWarn('No copper found.', true); draw2d(); update3d(); return }
+    const holes = []
+    for (const f of files.filter(x => x.type === 'drill')) {
+      const r = parseExcellonCached(f)
+      holes.push(...r.holes); r.warnings.forEach(w => addWarn(f.name + ': ' + w))
+    }
     for (const {f, cs} of parsed) {
       if (cs.isEmpty()) { addWarn(f.name + ': layer contains no copper.', true); continue }
-      const r = buildPlate(M, cs, bounds, {...params, mirrorX: f.mirror})
+      const r = buildPlate(M, cs, bounds, {...params, mirrorX: f.mirror}, holes)
       if (r.manifold.status() !== 'NoError') addWarn(f.name + ': mesh status ' + r.manifold.status(), true)
       results.set(f, r)
     }
@@ -162,11 +164,79 @@ function regenerate() {
       if (w > 220 || h > 220) addWarn(`Plate is ${w.toFixed(0)} × ${h.toFixed(0)} mm, larger than a 220 × 220 mm bed.`)
       $('export').disabled = false
     }
+    renderStackup(parsed, holes)
     draw2d(); update3d()
   } catch (e) {
     console.error(e); addWarn('Failed: ' + e.message, true); result = null; draw2d()
   }
 }
+const excellonCache = new Map()
+function parseExcellonCached(f) {
+  const key = f.name + ':' + f.text.length
+  if (!excellonCache.has(key)) excellonCache.set(key, parseExcellon(f.text))
+  return excellonCache.get(key)
+}
+
+// ---------- stack-up ----------
+const polyCache = new WeakMap()
+function inCopper(cs, x, y) {
+  let polys = polyCache.get(cs)
+  if (!polys) polyCache.set(cs, (polys = cs.toPolygons()))
+  let inside = false
+  for (const p of polys) {
+    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+      const [xi, yi] = p[i], [xj, yj] = p[j]
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
+    }
+  }
+  return inside
+}
+
+function renderStackup(parsed, holes) {
+  const box = $('stackup')
+  if (!parsed.length) { box.innerHTML = '<span class="muted">Load copper layers to see the stack-up.</span>'; return }
+  const layers = parsed.map(p => p.f), n = layers.length
+  // group holes by which layers have copper at the hole centre
+  const groups = new Map()
+  for (const h of holes) {
+    const hit = []
+    parsed.forEach(({cs}, i) => { if (!cs.isEmpty() && inCopper(cs, h.x, h.y)) hit.push(i) })
+    const key = (hit.length ? hit[0] + '-' + hit[hit.length - 1] + '-' + hit.join('.') : 'none') + '|' + h.d.toFixed(2)
+    const g = groups.get(key) || {hit, d: h.d, count: 0}
+    g.count++; groups.set(key, g)
+  }
+  const gl = [...groups.values()].sort((a, b) => (a.hit[0] ?? 99) - (b.hit[0] ?? 99) || b.count - a.count)
+  const W = 288, rowH = 24, gap = 16, top = 6, x0 = 112
+  const H = top * 2 + n * rowH + (n - 1) * gap
+  const cy = i => top + i * (rowH + gap) + rowH / 2
+  const colW = gl.length ? Math.min(22, (W - x0 - 14) / gl.length) : 0
+  const col = k => x0 + 10 + k * colW
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Layer stack-up">`
+  layers.forEach((f, i) => {
+    const color = '#' + LAYER_COLORS[i % LAYER_COLORS.length].toString(16).padStart(6, '0')
+    const y = top + i * (rowH + gap)
+    s += `<rect x="0" y="${y}" width="${W}" height="${rowH}" rx="3" fill="${color}" opacity=".85"/>`
+    s += `<rect x="0" y="${y + rowH - 5}" width="${W}" height="5" fill="#000" opacity=".25"/>`
+    s += `<text x="6" y="${y + 15}" font-size="11" fill="#111">L${i + 1} ${esc(f.name.replace(/\.[^.]+$/, '').slice(-13))}${f.mirror ? ' ⇋' : ''}</text>`
+    if (i < n - 1) s += `<text x="6" y="${y + rowH + 11}" font-size="9" fill="currentColor" opacity=".6">plate ${params.plateThickness_mm} mm${i === 0 ? '' : ''}</text>`
+  })
+  gl.forEach((g, k) => {
+    const x = col(k)
+    if (!g.hit.length) { s += `<line x1="${x}" y1="${top}" x2="${x}" y2="${H - top}" stroke="#888" stroke-width="2" stroke-dasharray="3 3"/>`; return }
+    const a = g.hit[0], b = g.hit[g.hit.length - 1]
+    s += `<line x1="${x}" y1="${cy(a)}" x2="${x}" y2="${cy(b)}" stroke="#fff" stroke-width="3" stroke-linecap="round"/>`
+    s += `<line x1="${x}" y1="${cy(a)}" x2="${x}" y2="${cy(b)}" stroke="#111" stroke-width="1"/>`
+    for (const i of g.hit) s += `<circle cx="${x}" cy="${cy(i)}" r="4.5" fill="#fff" stroke="#111" stroke-width="1.5"/>`
+  })
+  s += '</svg>'
+  const kind = g => !g.hit.length ? 'no copper (mounting)' : g.hit.length === 1 ? 'single layer' : g.hit[0] === 0 && g.hit[g.hit.length - 1] === n - 1 ? 'through' : g.hit[0] === 0 || g.hit[g.hit.length - 1] === n - 1 ? 'blind' : 'buried'
+  const names = g => g.hit.length ? g.hit.map(i => 'L' + (i + 1)).join('+') : '—'
+  s += '<ul class="muted vias">' + gl.map(g => `<li>${g.count}× Ø${g.d.toFixed(2)} mm · ${names(g)} · ${kind(g)}</li>`).join('') + '</ul>'
+  s += `<div class="muted">${n} plates × (${params.plateThickness_mm} plate + ${params.trackHeight_mm} track) = ${(n * (params.plateThickness_mm + params.trackHeight_mm)).toFixed(1)} mm stacked</div>`
+  box.innerHTML = s
+}
+const esc = t => t.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]))
+
 function boundsOf(cs) { const b = cs.bounds(); return {minX: b.min[0], minY: b.min[1], maxX: b.max[0], maxY: b.max[1]} }
 
 // ---------- 2D preview ----------
@@ -190,6 +260,8 @@ function draw2d() {
   g.fillStyle = '#2a2f38'; g.fillRect(X(pl.minX), Y(pl.maxY), pw * s, ph * s)
   if (result.groove2d) { path(result.groove2d.toPolygons()); g.fillStyle = '#0b0c0e'; g.fill('evenodd') }
   path(result.copper.toPolygons()); g.fillStyle = '#d9822b'; g.fill('evenodd')
+  g.fillStyle = '#14161a'
+  for (const h of result.holes || []) { g.beginPath(); g.arc(X(h.x), Y(h.y), Math.max(1.5, (h.d / 2) * s), 0, 7); g.fill() }
   g.fillStyle = '#8b919c'; g.font = '12px system-ui'
   g.fillText(selected?.mirror ? 'Mirrored (as printed, viewed from above)' : 'As designed (viewed from above)', 12, H - 12)
 }

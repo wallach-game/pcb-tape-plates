@@ -7,6 +7,7 @@ export const DEFAULT_PARAMS = {
   grooveDepth_mm: 0.4,
   grooveTipWidth_mm: 0.1,
   boardMargin_mm: 5,
+  minViaHole_mm: 0.6,
   mirrorX: false,
 }
 
@@ -21,7 +22,7 @@ function ringAt(M, copper, c, h) {
  * copper: CrossSection (mm). bounds: {minX,minY,maxX,maxY} of the board (before margin).
  * Returns {manifold, copper (after mirror), plate: {minX,minY,maxX,maxY}}
  */
-export function buildPlate(M, copperIn, bounds, p) {
+export function buildPlate(M, copperIn, bounds, p, holes = []) {
   const {Manifold, CrossSection} = M
   let copper = copperIn
   const b = {...bounds}
@@ -52,7 +53,14 @@ export function buildPlate(M, copperIn, bounds, p) {
     }
     solid = solid.subtract(Manifold.union(cuts))
   }
-  return {manifold: solid, copper, groove2d, plate}
+  // through holes (design coordinates in; mirrored with the layer so they line up across plates)
+  const hs = holes.map(h => ({x: p.mirrorX ? b.minX + b.maxX - h.x : h.x, y: h.y, d: Math.max(h.d, p.minViaHole_mm)}))
+  if (hs.length) {
+    const H = T + p.trackHeight_mm + 2
+    const cyl = hs.map(h => Manifold.cylinder(H, h.d / 2, h.d / 2, CIRCLE_SEGMENTS).translate([h.x, h.y, -1]))
+    solid = solid.subtract(Manifold.union(cyl))
+  }
+  return {manifold: solid, copper, groove2d, plate, holes: hs}
 }
 
 /** Binary STL from a manifold. */
