@@ -24,6 +24,7 @@ const PARAM_UI = [
   ['boardMargin_mm', 'Board margin (mm)', 1],
   ['minViaHole_mm', 'Minimum hole diameter (mm)', 0.1],
   ['negativeClearance_mm', 'Negative clearance to copper (mm)', 0.05],
+  ['lineWidth_mm', 'Printed line width (mm)', 0.05],
   ['registrationPinDiameter_mm', 'Registration pin Ø (mm, 0 = off)', 0.5],
   ['registrationClearance_mm', 'Registration clearance (mm)', 0.05],
   ['layerHeightBase_mm', 'Layer height, body (mm)', 0.05],
@@ -571,6 +572,73 @@ function export3mf() {
   if (overflow) alert('Warning: not everything fits on a ' + bed + ' mm bed; some parts overlap the bed edge. Reduce the board margin or print in several jobs.')
 }
 $('export3mf').onclick = export3mf
+
+
+// EasyEDA Pro design rules: take the user's exported rule file and change only the numbers that the printing process limits.
+const ceilTo = (v, step) => Math.round(Math.ceil(v / step - 1e-9) * step * 1000) / 1000
+function deriveRules() {
+  const L = params.lineWidth_mm, c = params.negativeClearance_mm
+  const sepStyle = params.mode === 'separate'
+  // spacing: a negative-piece line plus its clearance each side, or a groove with its offsets
+  const spacing = ceilTo(Math.max(L + 2 * c, 2 * params.grooveOffset_mm + params.grooveWidthTop_mm), 0.1)
+  const trackMin = ceilTo(L + 0.05, 0.05) // one full printed line plus a little, rounded up
+  const holeMin = params.minViaHole_mm
+  return {sepStyle, spacing, trackMin, trackDefault: ceilTo(2 * L, 0.1), holeMin, holeDefault: Math.max(0.8, holeMin), ring: ceilTo(L, 0.05)}
+}
+function applyRules(j, r) {
+  const touched = []
+  for (const k of ['copperThickness1oz', 'copperThickness2oz']) {
+    const t = j.Physics?.Track?.[k]?.form?.data
+    if (t) for (const d of Object.values(t)) { d.minValue = r.trackMin; d.defaultValue = r.trackDefault; d.maxValue = Math.max(d.maxValue, r.trackDefault); touched.push('track width ' + k) }
+    // copper-to-copper spacing (rows/columns 0..7 are Track ... Copper/Plane Zone); outline, hole, text and line spacing stay as exported
+    const tbl = j.Spacing?.['Safe Spacing']?.[k]?.tables
+    if (tbl) for (const tab of Object.values(tbl)) tab.content.forEach((row, i) => row.forEach((v, jx) => { if (i <= 7 && jx <= 7) row[jx] = r.spacing }))
+  }
+  const via = j.Physics?.['Via Size']?.viaSize?.form
+  if (via) {
+    via.viaInnerdiameterMin = r.holeMin; via.viaInnerdiameterDefault = r.holeDefault
+    via.viaOuterdiameterMin = ceilTo(r.holeMin + 2 * r.ring, 0.05); via.viaOuterdiameterDefault = ceilTo(r.holeDefault + 2 * r.ring, 0.05)
+    via.viaOuterdiameterMax = Math.max(via.viaOuterdiameterMax, via.viaOuterdiameterDefault)
+  }
+  const hh = j.Spacing?.['Other Spacing']?.otherClearance?.form
+  if (hh) hh.hole2Hole = Math.max(hh.hole2Hole, r.spacing)
+  return j
+}
+$('exportRules').onclick = () => $('rulesFile').click()
+$('rulesFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''
+  if (!f) return
+  let j
+  try { j = JSON.parse(await f.text()) } catch { alert('This is not a JSON file. Export the design rules from EasyEDA Pro first.'); return }
+  if (!j.Physics?.Track || !j.Spacing?.['Safe Spacing']) { alert('This does not look like an EasyEDA Pro design-rule export (no Physics/Track or Spacing/Safe Spacing).'); return }
+  const r = deriveRules()
+  applyRules(j, r)
+  download(new Blob([JSON.stringify(j, null, 2)], {type: 'application/json'}), f.name.replace(/\.json$/i, '') + ' pcb mode.json')
+  $('rulesInfo').textContent = `Track min ${r.trackMin} / default ${r.trackDefault} mm, copper spacing ${r.spacing} mm, via hole ${r.holeMin}–${r.holeDefault} mm, pad ring ${r.ring} mm.`
+}
+// Take the user's own full PrusaSlicer config (File > Export > Export Config) and change only first_layer_height.
+// A partial config would make PrusaSlicer fall back to defaults for everything else, so the full file is kept.
+$('exportIni').onclick = () => $('iniFile').click()
+$('iniFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''
+  if (!f) return
+  const text = await f.text()
+  const value = 'first_layer_height = ' + params.layerHeightFine_mm
+  const re = /^first_layer_height\s*=.*$/m
+  if (!re.test(text)) { alert('This does not look like a full PrusaSlicer config (no first_layer_height line). Use File > Export > Export Config.'); return }
+  const base = f.name.replace(/\.ini$/i, '')
+  let out = text.replace(re, value)
+  // Rename the print, filament and printer presets to "<name> pcb mode" so the loaded profile is obvious in PrusaSlicer.
+  // Values may be quoted ("name"), so append inside the quotes.
+  const rename = [...document.querySelectorAll('#renameBox input:checked')].map(c => c.dataset.key)
+  for (const key of rename) {
+    out = out.replace(new RegExp('^' + key + '\\s*=\\s*(.*?)\\s*$', 'm'), (_, v) => {
+      if (/"/.test(v)) return key + ' = ' + v.replace(/"([^"]*)"/g, (__, n) => '"' + (n ? n + ' pcb mode' : 'pcb mode') + '"')
+      return key + ' = ' + (v ? v + ' pcb mode' : 'pcb mode')
+    })
+  }
+  download(new Blob([out], {type: 'text/plain'}), base + ' pcb mode.ini')
+}
 
 
 $('export').onclick = () => {

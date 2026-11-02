@@ -31,7 +31,13 @@
 
   <button id="export3mf" type="button" class="primary" disabled>Export 3MF (all layers, PrusaSlicer)</button>
   <button id="export" type="button" disabled>Export STL (selected layer)</button>
-  <p class="muted"><b>First layer:</b> it is a global print setting the 3MF cannot carry. In PrusaSlicer duplicate your usual <i>print</i> preset, set Layers and perimeters &gt; First layer height to your fine layer height (e.g. 0.06 mm) and save it as a new preset. Your printer and filament presets stay as they are.</p>
+  <button id="exportRules" type="button" style="width:100%;margin-top:8px">Make EasyEDA design rules (.json) from my export…</button>
+  <input id="rulesFile" type="file" accept=".json" hidden>
+  <p class="muted" id="rulesInfo">In EasyEDA Pro export your design rules, pick that file here, import the returned <code>… pcb mode.json</code> back. Only track width, copper spacing and via sizes change.</p>
+  <button id="exportIni" type="button" style="width:100%;margin-top:8px">Make first-layer .ini from my PrusaSlicer config…</button>
+  <input id="iniFile" type="file" accept=".ini" hidden>
+  <div class="muted" id="renameBox">Append &ldquo;pcb mode&rdquo; to: <label><input type="checkbox" data-key="print_settings_id" checked> print</label> <label><input type="checkbox" data-key="filament_settings_id" checked> filament</label> <label><input type="checkbox" data-key="printer_settings_id"> printer</label> <span>(printer rename can detach the bed size and model from your printer preset)</span></div>
+  <p class="muted"><b>First layer:</b> a 3MF cannot carry it. In PrusaSlicer pick your printer, filament and print presets and use <i>File &gt; Export &gt; Export Config</i>. Choose that file above: the app sets <code>first_layer_height</code> (to your fine layer height), appends &ldquo;pcb mode&rdquo; to the print, filament and printer preset names so you can see it loaded, and gives it back as <code>&lt;name&gt; pcb mode.ini</code>. Import the result with <i>File &gt; Import &gt; Import Config</i>; all your other settings stay as exported. Runs locally; the file is not uploaded.</p>
   <ul id="warnings"></ul>
   <p class="muted">Everything runs in your browser; files are never uploaded.</p>
 </aside>

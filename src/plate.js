@@ -9,6 +9,7 @@ export const DEFAULT_PARAMS = {
   boardMargin_mm: 5,
   minViaHole_mm: 0.6,
   negativeClearance_mm: 0.2,
+  lineWidth_mm: 0.45, // one extrusion line of your slicer profile (0.4 mm nozzle -> about 0.45)
   mode: 'groove', // 'groove' = one plate with knife groove; 'separate' = base + tracks + negative parts
   registrationPinDiameter_mm: 3, // 0 disables pins and holes
   registrationClearance_mm: 0.2,

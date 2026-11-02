@@ -44,3 +44,4 @@ nav{flex-wrap:wrap}
 #params select{max-width:170px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}
 #legend[hidden]{display:none}
 .extra{display:block;margin-top:10px}.extra textarea{width:100%;margin-top:4px;font:12px ui-monospace,monospace;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px}
+#renameBox{margin-top:6px}#renameBox label{margin-right:6px;white-space:nowrap}#renameBox span{display:block;opacity:.8}
