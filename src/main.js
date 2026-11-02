@@ -33,7 +33,7 @@ const PARAM_UI = [
   ['plateSpacing_mm', 'Plate spacing on bed (mm)', 1],
   ['bedSize_mm', 'Bed size (mm)', 10],
 ]
-const STORE_KEY = 'pcbtape.params.v1'
+const STORE_KEY = 'pcbtape.params.v2'
 
 let M, files = [], selected = null, params = loadParams(), result = null
 const results = new Map() // copper file -> plate result
@@ -247,6 +247,7 @@ function inCopper(cs, x, y) {
 
 function renderStackup(parsed, holes) {
   const box = $('stackup')
+  viaData = []
   if (!parsed.length) { box.innerHTML = '<span class="muted">Load copper layers to see the stack-up.</span>'; return }
   const layers = parsed.map(p => p.f), n = layers.length
   // group holes by which layers have copper at the hole centre
@@ -254,6 +255,7 @@ function renderStackup(parsed, holes) {
   for (const h of holes) {
     const hit = []
     parsed.forEach(({cs}, i) => { if (!cs.isEmpty() && inCopper(cs, h.x, h.y)) hit.push(i) })
+    viaData.push({x: h.x, y: h.y, d: h.d, files: hit.map(i => parsed[i].f)})
     const key = (hit.length ? hit[0] + '-' + hit[hit.length - 1] + '-' + hit.join('.') : 'none') + '|' + h.d.toFixed(2)
     const g = groups.get(key) || {hit, d: h.d, count: 0}
     g.count++; groups.set(key, g)
@@ -344,7 +346,9 @@ const LAYER_COLORS = [0xd9a066, 0x7fb3d5, 0x9ccc7a, 0xc792ea, 0xe5c07b, 0x66c2b0
 let meshes = [], fitted = false, explode = 0, explodeTarget = 0
 const explodeSlider = $('explode')
 
-const vis = {plate: true, copper: true, neg: true, groove: false}
+const vis = {plate: true, copper: true, neg: true, groove: false, vias: true}
+let viaData = [] // [{x, y, d, files: [copper files with copper at the hole]}]
+let viaObjs = []
 const PART_COLORS = {copper: 0xe8892b, neg: 0x19c3b1, groove: 0x15171b}
 
 function toGeometry(man) {
@@ -386,9 +390,9 @@ function update3d() {
     }
     for (const mesh of Object.values(parts)) if (mesh) group.add(mesh)
     scene.add(group)
-    meshes.push({group, parts, level: list.length - 1 - idx}) // first listed layer (top) sits highest
+    meshes.push({group, parts, file: f, result: r, level: list.length - 1 - idx}) // first listed layer (top) sits highest
   })
-  applyExplode(); applyVisibility()
+  applyExplode(); applyVisibility(); buildVias()
   if (!fitted && result) {
     const pl = result.plate, cx = (pl.minX + pl.maxX) / 2, cy = (pl.minY + pl.maxY) / 2
     controls.target.set(cx, cy, 8)
@@ -398,11 +402,45 @@ function update3d() {
   renderLegend(list)
 }
 function applyVisibility() {
+  for (const o of viaObjs) o.line.visible = o.pts.visible = vis.vias
   for (const o of meshes) for (const [k, mesh] of Object.entries(o.parts)) if (mesh) mesh.visible = vis[k]
 }
 function applyExplode() {
   const pitch = params.plateThickness_mm + params.trackHeight_mm
   for (const o of meshes) o.group.position.z = o.level * (pitch + explode)
+  updateVias()
+}
+
+// Via lines: a polyline through every layer that has copper at the hole, plus a marker on each pad.
+function buildVias() {
+  for (const v of viaObjs) { scene.remove(v.line); scene.remove(v.pts); v.line.geometry.dispose(); v.pts.geometry.dispose() }
+  viaObjs = []
+  for (const v of viaData) {
+    const stops = v.files.map(f => meshes.find(o => o.file === f)).filter(Boolean)
+    if (stops.length < 1) continue
+    const geo = () => new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(stops.length * 3), 3))
+    const line = new THREE.Line(geo(), new THREE.LineBasicMaterial({color: 0xffffff, depthTest: false, transparent: true}))
+    const pts = new THREE.Points(geo(), new THREE.PointsMaterial({color: 0xffee58, size: 6, sizeAttenuation: false, depthTest: false, transparent: true}))
+    line.renderOrder = pts.renderOrder = 10
+    scene.add(line); scene.add(pts)
+    viaObjs.push({line, pts, stops, v})
+  }
+  updateVias()
+}
+function updateVias() {
+  const T = params.plateThickness_mm + params.trackHeight_mm
+  for (const o of viaObjs) {
+    const pos = o.line.geometry.attributes.position
+    o.stops.forEach((s, i) => {
+      const pl = s.result.plate
+      const x = s.file.mirror ? pl.minX + pl.maxX - o.v.x : o.v.x // mirrored plates carry the mirrored hole position
+      pos.setXYZ(i, x, o.v.y, s.group.position.z + T)
+    })
+    o.pts.geometry.attributes.position.array.set(pos.array)
+    pos.needsUpdate = true; o.pts.geometry.attributes.position.needsUpdate = true
+    o.line.visible = o.pts.visible = vis.vias
+    o.line.geometry.computeBoundingSphere(); o.pts.geometry.computeBoundingSphere()
+  }
 }
 function renderLegend(list) {
   $('legend').innerHTML = list.map((f, i) => '<span><i style="background:#' + LAYER_COLORS[i % LAYER_COLORS.length].toString(16).padStart(6, '0') + '"></i>' + f.name + (f.mirror ? ' (mirrored)' : '') + '</span>').join('')
@@ -457,7 +495,12 @@ function download(blob, name) {
 }
 
 /** One 3MF with every plate (and the registration pins) laid out on the bed, plus PrusaSlicer settings. */
+// Largest layer height <= wanted that divides the thickness into whole layers
+const snapLayer = (thickness, wanted) => thickness / Math.max(1, Math.ceil(thickness / wanted - 1e-6))
+
 function export3mf() {
+  const lhBase = snapLayer(params.plateThickness_mm, params.layerHeightBase_mm)
+  const lhFine = snapLayer(params.trackHeight_mm, params.layerHeightFine_mm)
   const extra = parseExtraSettings(params.extraSettings)
   const {Manifold} = M
   const items = []
@@ -465,26 +508,29 @@ function export3mf() {
   const grooveD = effectiveGrooveDepth(params)
   const base = n => n.replace(/\.[^.]+$/, '')
   // solid band below zoneTop (so the tracks/groove never sit over sparse infill), then fine layers up to the track tops
+  // Thin plate with one uniform layer height: no ranges at all, the whole base is simply solid.
+  const needRanges = lhBase !== lhFine || params.plateThickness_mm > params.solidZone_mm
   const zoneRanges = (zoneTop, fineThickness) => {
+    if (!needRanges) return undefined
     const z = params.solidZone_mm, top = zoneTop + fineThickness
     const r = []
-    if (z > 0) r.push({min: Math.max(0, zoneTop - z), max: zoneTop, options: {layer_height: params.layerHeightBase_mm, fill_density: '100%'}})
-    r.push({min: zoneTop, max: top, options: {layer_height: params.layerHeightFine_mm, fill_density: '100%'}})
+    if (z > 0) r.push({min: Math.max(0, zoneTop - z), max: zoneTop, options: {layer_height: lhBase, fill_density: '100%'}})
+    r.push({min: zoneTop, max: top, options: {layer_height: lhFine, fill_density: '100%'}})
     return r
   }
-  const common = {fill_density: params.infillPercent + '%', fill_pattern: params.infillPattern}
+  const common = {fill_density: (needRanges ? params.infillPercent : 100) + '%', fill_pattern: params.infillPattern}
   const list = files.filter(f => results.has(f))
   for (const f of list) {
     const r = results.get(f), n = base(f.name)
     if (r.mode === 'separate') {
       items.push({
-        name: n + '_base', man: r.parts.base, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm},
+        name: n + '_base', man: r.parts.base, plate: r.plate, options: {...common, layer_height: lhBase},
         ranges: zoneRanges(T, h), // solid band under the tracks, fine layers for the tracks
       })
-      items.push({name: n + '_negative', man: r.parts.neg, plate: r.plate, options: {fill_density: '100%', layer_height: params.layerHeightFine_mm}})
+      items.push({name: n + '_negative', man: r.parts.neg, plate: r.plate, options: {fill_density: '100%', layer_height: lhFine}})
     } else {
       items.push({
-        name: n, man: r.manifold, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm},
+        name: n, man: r.manifold, plate: r.plate, options: {...common, layer_height: lhBase},
         // fine layers only where the groove and tracks are; coarse below
         ranges: zoneRanges(T - grooveD, h + grooveD),
       })
@@ -508,7 +554,7 @@ function export3mf() {
   if (rd > 0 && list.length) {
     const L = list.length * (T + h) + 2
     const pins = Manifold.union([0, 1, 2].map(i => Manifold.cylinder(L, rd / 2, rd / 2, 32).translate([rd / 2 + i * (rd + 2), rd / 2, 0])))
-    place(pins, 3 * rd + 4, rd, {name: 'registration_pins', options: {fill_density: '100%', layer_height: params.layerHeightBase_mm}})
+    place(pins, 3 * rd + 4, rd, {name: 'registration_pins', options: {fill_density: '100%', layer_height: lhBase}})
   }
   const blob = build3mf(placed)
   placed.forEach(o => o.manifold.delete())
