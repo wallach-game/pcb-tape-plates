@@ -440,6 +440,16 @@ function loadExample(key) {
 $('example').onclick = () => loadExample('test')
 $('example4').onclick = () => loadExample('demo4')
 $('reset').onclick = () => { params = {...DEFAULT_PARAMS}; saveParams(); syncParams(); regenerate() }
+// "key = value" lines -> per-object PrusaSlicer settings applied to every object (override the defaults above)
+function parseExtraSettings(text = '') {
+  const out = {}
+  for (const line of text.split(/\r?\n/)) {
+    const mm = line.match(/^\s*([a-z_0-9]+)\s*=\s*(.*?)\s*$/i)
+    if (mm && !line.trim().startsWith('#')) out[mm[1]] = mm[2]
+  }
+  return out
+}
+
 function download(blob, name) {
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob); a.download = name
@@ -448,6 +458,7 @@ function download(blob, name) {
 
 /** One 3MF with every plate (and the registration pins) laid out on the bed, plus PrusaSlicer settings. */
 function export3mf() {
+  const extra = parseExtraSettings(params.extraSettings)
   const {Manifold} = M
   const items = []
   const T = params.plateThickness_mm, h = params.trackHeight_mm
@@ -486,7 +497,7 @@ function export3mf() {
   const place = (man, w, d, o) => {
     if (x + w + sp > bed && x > sp) { x = sp; y += rowH + sp; rowH = 0 }
     if (y + d + sp > bed || w + 2 * sp > bed) overflow = true
-    placed.push({...o, manifold: man.translate([x, y, 0]), tmp: true})
+    placed.push({...o, options: {...o.options, ...extra}, manifold: man.translate([x, y, 0])})
     x += w + sp; rowH = Math.max(rowH, d)
   }
   for (const it of items) {
@@ -522,6 +533,8 @@ for (const cb of document.querySelectorAll('#viewBox input')) {
   cb.onchange = () => { vis[cb.dataset.part] = cb.checked; applyVisibility() }
 }
 buildParamsForm()
+$('extra').value = params.extraSettings || ''
+$('extra').oninput = () => { params.extraSettings = $('extra').value; saveParams() }
 M = await Module({locateFile: () => wasmUrl}); M.setup()
 { const q = new URLSearchParams(location.search); if (q.has('separate')) { params.mode = 'separate'; syncParams() } if (q.has('example')) loadExample('test'); if (q.has('demo4')) loadExample('demo4') }
 if (new URLSearchParams(location.search).has('3d')) { document.querySelector('nav button[data-view="3d"]').click(); if (new URLSearchParams(location.search).has('exploded')) { explodeTarget = 12; explodeSlider.value = 12 } }

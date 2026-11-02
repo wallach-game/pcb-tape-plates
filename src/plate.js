@@ -19,6 +19,7 @@ export const DEFAULT_PARAMS = {
   infillPercent: 15,
   solidZone_mm: 0.8, // fully solid band under the tracks/groove so thin tracks never print over sparse infill
   infillPattern: 'gyroid',
+  extraSettings: '', // extra per-object PrusaSlicer settings, one 'key = value' per line
   mirrorX: false,
 }
 

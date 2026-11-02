@@ -43,3 +43,4 @@ nav{flex-wrap:wrap}
 #export{width:100%;margin-top:8px}
 #params select{max-width:170px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}
 #legend[hidden]{display:none}
+.extra{display:block;margin-top:10px}.extra textarea{width:100%;margin-top:4px;font:12px ui-monospace,monospace;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px}
