@@ -1,0 +1,31 @@
+:root{--bg:#14161a;--panel:#1d2026;--fg:#e4e6ea;--muted:#8b919c;--acc:#e0883a;--line:#2f343d}
+@media (prefers-color-scheme:light){:root{--bg:#f2f3f5;--panel:#fff;--fg:#1c1f24;--muted:#6b717c;--line:#d8dbe0}}
+*{box-sizing:border-box}
+body{margin:0;display:flex;height:100vh;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
+aside{width:320px;min-width:320px;padding:16px;background:var(--panel);border-right:1px solid var(--line);overflow:auto}
+main{flex:1;position:relative;min-width:0}
+h1{font-size:17px;margin:0 0 12px}h1 small{color:var(--muted);font-weight:400}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:18px 0 6px}
+#drop{border:2px dashed var(--line);border-radius:8px;padding:18px;text-align:center;cursor:pointer;color:var(--muted)}
+#drop.over{border-color:var(--acc);color:var(--fg)}
+button{font:inherit;color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--acc)}
+button:disabled{opacity:.4;cursor:default}
+button.primary{width:100%;margin-top:16px;background:var(--acc);border-color:var(--acc);color:#fff;padding:9px;font-weight:600}
+#example,#example4{width:100%;margin-top:8px}
+ul{list-style:none;padding:0;margin:0}
+#layers li{display:flex;gap:6px;align-items:center;padding:3px 0}
+#layers li span.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#layers select{font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}
+.muted{color:var(--muted);font-size:12px}
+#params label{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
+#params input[type=number]{width:80px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:2px 4px}
+#warnings li{color:#e5b43a;font-size:12px;margin-top:6px}
+#warnings li.err{color:#e5584a}
+.row{margin-top:8px}
+nav{position:absolute;top:10px;left:10px;right:10px;z-index:2;display:flex;gap:6px;align-items:center;pointer-events:none}
+nav>*{pointer-events:auto}
+nav button{background:var(--panel)}nav button.active{border-color:var(--acc)}
+#info{margin-left:auto;color:var(--muted);font-size:12px;background:var(--panel);padding:4px 8px;border-radius:6px}
+#c2d,#c3d{position:absolute;inset:0;width:100%;height:100%}
+@media (max-width:760px){body{flex-direction:column;height:auto}aside{width:auto;min-width:0}main{height:70vh}}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copper-Tape PCB Plates</title>
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<aside>
+  <h1>Copper-Tape PCB Plates <small>v0.0.1</small></h1>
+  <div id="drop">Drop Gerber / drill files here<br><u>or click to choose</u>
+    <input id="file" type="file" multiple hidden></div>
+  <button id="example" type="button">Load test pattern</button>
+  <button id="example4" type="button">Load 4-layer demo board</button>
+
+  <h2>Layers</h2>
+  <ul id="layers"><li class="muted">No files loaded</li></ul>
+
+  <h2>Parameters</h2>
+  <form id="params"></form>
+  <div class="row">
+    <button id="reset" type="button">Reset defaults</button>
+  </div>
+
+  <button id="export" type="button" class="primary" disabled>Export STL</button>
+  <ul id="warnings"></ul>
+  <p class="muted">Everything runs in your browser; files are never uploaded.</p>
+</aside>
+<main>
+  <nav>
+    <button data-view="2d" class="active">2D copper</button>
+    <button data-view="3d">3D plate</button>
+    <span id="info"></span>
+  </nav>
+  <canvas id="c2d"></canvas>
+  <div id="c3d" hidden></div>
+</main>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
