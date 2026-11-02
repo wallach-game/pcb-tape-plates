@@ -197,6 +197,10 @@ function regenerate() {
       const T = params.plateThickness_mm, h = params.trackHeight_mm, f = params.layerHeightFine_mm
       const aligned = (v, step) => Math.abs(v / step - Math.round(v / step)) < 0.02
       if (!aligned(h, f)) addWarn(`Track height ${h} mm is not a multiple of the fine layer height ${f} mm; the slicer will round it.`)
+      if (params.mode === 'groove') {
+        const floor = T - effectiveGrooveDepth(params)
+        if (floor < 2 * params.layerHeightBase_mm - 1e-6) addWarn(`Groove leaves only ${floor.toFixed(2)} mm of plate under it (less than 2 layers); tracks can detach from the base. Use the separate style or a thicker plate. In the slicer the first layer height must also be at most ${params.layerHeightBase_mm} mm.`)
+      }
       if (!aligned(T, params.layerHeightBase_mm)) addWarn(`Plate thickness ${T} mm is not a multiple of the body layer height ${params.layerHeightBase_mm} mm.`)
     }
     const holes = []
