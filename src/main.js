@@ -112,7 +112,7 @@ function buildParamsForm() {
   const form = $('params')
   form.innerHTML = ''
   const SELECTS = [
-    ['mode', 'Plate style', [['groove', 'Knife groove (single plate)'], ['separate', 'Separate base / tracks / negative']]],
+    ['mode', 'Plate style', [['groove', 'Knife groove (single plate)'], ['separate', 'Separate base+tracks / negative']]],
     ['infillPattern', 'Infill pattern', [['gyroid', 'Gyroid'], ['grid', 'Grid'], ['rectilinear', 'Rectilinear'], ['honeycomb', 'Honeycomb'], ['cubic', 'Cubic']]],
   ]
   for (const [key, label, opts] of SELECTS) {
@@ -366,11 +366,11 @@ function update3d() {
     const parts = {}
     const mat = c => new THREE.MeshStandardMaterial({color: c, roughness: 0.7})
     if (r.mode === 'separate') {
-      // assembled: base, with the tracks part and the negative part sitting on top of it
+      // assembled: base with its raised tracks, and the negative part sitting on top of the base
       parts.plate = new THREE.Mesh(toGeometry(r.parts.base), mat(LAYER_COLORS[idx % LAYER_COLORS.length]))
-      parts.copper = new THREE.Mesh(toGeometry(r.parts.tracks), mat(PART_COLORS.copper))
+      parts.copper = slab(r.copper, T, params.trackHeight_mm + 0.02, PART_COLORS.copper)
       parts.neg = new THREE.Mesh(toGeometry(r.parts.neg), mat(PART_COLORS.neg))
-      parts.copper.position.z = parts.neg.position.z = T
+      parts.neg.position.z = T
     } else {
       parts.plate = new THREE.Mesh(toGeometry(r.manifold), mat(LAYER_COLORS[idx % LAYER_COLORS.length]))
       parts.copper = slab(r.copper, T, params.trackHeight_mm + 0.02, PART_COLORS.copper)
@@ -451,8 +451,10 @@ function export3mf() {
   for (const f of list) {
     const r = results.get(f), n = base(f.name)
     if (r.mode === 'separate') {
-      items.push({name: n + '_base', man: r.parts.base, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm}})
-      items.push({name: n + '_tracks', man: r.parts.tracks, plate: r.plate, options: {fill_density: '100%', layer_height: params.layerHeightFine_mm}})
+      items.push({
+        name: n + '_base', man: r.parts.base, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm},
+        ranges: [{min: T, max: T + h, options: {layer_height: params.layerHeightFine_mm}}], // fine layers for the raised tracks
+      })
       items.push({name: n + '_negative', man: r.parts.neg, plate: r.plate, options: {fill_density: '100%', layer_height: params.layerHeightFine_mm}})
     } else {
       items.push({

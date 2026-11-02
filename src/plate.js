@@ -78,8 +78,8 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
 }
 
 /**
- * Separate-parts style: flat base, raised-tracks part and negative (filler) part.
- * Tracks and negative are each trackHeight thick. The negative fills the area where the tape is
+ * Separate-parts style: base plate with the raised tracks on it, and a separate negative (filler) part.
+ * The negative is trackHeight thick. The negative fills the area where the tape is
  * peeled away, leaving negativeClearance around the copper. Parts are laid side by side in
  * manifold (for export); parts.* hold each body at its own origin for assembled preview.
  */
@@ -89,14 +89,13 @@ function buildSeparate(M, copper, plate, p, hs) {
   const w = plate.maxX - plate.minX, d = plate.maxY - plate.minY
   const rect = CrossSection.square([w, d]).translate([plate.minX, plate.minY])
   const cut = (man, H) => hs.length ? man.subtract(Manifold.union(hs.map(q => Manifold.cylinder(H + 2, q.d / 2, q.d / 2, CIRCLE_SEGMENTS).translate([q.x, q.y, -1])))) : man
-  const base = cut(rect.extrude(T), T)
-  const tracks = cut(copper.extrude(h), h)
+  const base = cut(rect.extrude(T).add(copper.extrude(h).translate([0, 0, T])), T + h)
   const neg2d = rect.subtract(copper.offset(p.negativeClearance_mm, 'Round', 2, CIRCLE_SEGMENTS))
   const neg = cut(neg2d.extrude(h), h)
   const groove2d = ringAt(M, copper, p.grooveOffset_mm + W / 2, W / 2)
   const gap = 5
-  const manifold = Manifold.union([base, tracks.translate([w + gap, 0, 0]), neg.translate([2 * (w + gap), 0, 0])])
-  return {manifold, parts: {base, tracks, neg}, copper, groove2d: null, neg2d, plate, holes: hs, T, mode: 'separate'}
+  const manifold = Manifold.union([base, neg.translate([w + gap, 0, 0])])
+  return {manifold, parts: {base, neg}, copper, groove2d: null, neg2d, plate, holes: hs, T, mode: 'separate'}
 }
 
 /** Binary STL from a manifold. */
