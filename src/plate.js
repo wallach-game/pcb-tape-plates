@@ -17,6 +17,7 @@ export const DEFAULT_PARAMS = {
   layerHeightBase_mm: 0.2,
   layerHeightFine_mm: 0.05,
   infillPercent: 15,
+  solidZone_mm: 0.8, // fully solid band under the tracks/groove so thin tracks never print over sparse infill
   infillPattern: 'gyroid',
   mirrorX: false,
 }

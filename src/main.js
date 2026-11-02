@@ -29,6 +29,7 @@ const PARAM_UI = [
   ['layerHeightBase_mm', 'Layer height, body (mm)', 0.05],
   ['layerHeightFine_mm', 'Layer height, track zone (mm)', 0.01],
   ['infillPercent', 'Infill (%)', 5],
+  ['solidZone_mm', 'Solid zone under tracks (mm)', 0.1],
   ['plateSpacing_mm', 'Plate spacing on bed (mm)', 1],
   ['bedSize_mm', 'Bed size (mm)', 10],
 ]
@@ -446,6 +447,14 @@ function export3mf() {
   const T = params.plateThickness_mm, h = params.trackHeight_mm
   const grooveD = Math.min(params.grooveDepth_mm, T - 0.4)
   const base = n => n.replace(/\.[^.]+$/, '')
+  // solid band below zoneTop (so the tracks/groove never sit over sparse infill), then fine layers up to the track tops
+  const zoneRanges = (zoneTop, fineThickness) => {
+    const z = params.solidZone_mm, top = zoneTop + fineThickness
+    const r = []
+    if (z > 0) r.push({min: Math.max(0, zoneTop - z), max: zoneTop, options: {fill_density: '100%'}})
+    r.push({min: zoneTop, max: top, options: {layer_height: params.layerHeightFine_mm, fill_density: '100%'}})
+    return r
+  }
   const common = {fill_density: params.infillPercent + '%', fill_pattern: params.infillPattern}
   const list = files.filter(f => results.has(f))
   for (const f of list) {
@@ -453,14 +462,14 @@ function export3mf() {
     if (r.mode === 'separate') {
       items.push({
         name: n + '_base', man: r.parts.base, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm},
-        ranges: [{min: T, max: T + h, options: {layer_height: params.layerHeightFine_mm}}], // fine layers for the raised tracks
+        ranges: zoneRanges(T, h), // solid band under the tracks, fine layers for the tracks
       })
       items.push({name: n + '_negative', man: r.parts.neg, plate: r.plate, options: {fill_density: '100%', layer_height: params.layerHeightFine_mm}})
     } else {
       items.push({
         name: n, man: r.manifold, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm},
         // fine layers only where the groove and tracks are; coarse below
-        ranges: [{min: T - grooveD, max: T + h, options: {layer_height: params.layerHeightFine_mm}}],
+        ranges: zoneRanges(T - grooveD, h + grooveD),
       })
     }
   }
