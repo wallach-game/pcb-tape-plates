@@ -4,7 +4,9 @@ import * as THREE from 'three'
 import {OrbitControls} from 'three/examples/jsm/controls/OrbitControls.js'
 import {gerberToCrossSection} from './gerber.js'
 import {parseExcellon} from './excellon.js'
+import {unzipSync, strFromU8} from 'fflate'
 import {buildPlate, DEFAULT_PARAMS, toBinaryStl} from './plate.js'
+import {build3mf} from './threemf.js'
 
 const examples = {
   test: import.meta.glob('../examples/testpattern*', {query: '?raw', import: 'default', eager: true}),
@@ -22,6 +24,13 @@ const PARAM_UI = [
   ['boardMargin_mm', 'Board margin (mm)', 1],
   ['minViaHole_mm', 'Minimum hole diameter (mm)', 0.1],
   ['negativeClearance_mm', 'Negative clearance to copper (mm)', 0.05],
+  ['registrationPinDiameter_mm', 'Registration pin Ø (mm, 0 = off)', 0.5],
+  ['registrationClearance_mm', 'Registration clearance (mm)', 0.05],
+  ['layerHeightBase_mm', 'Layer height, body (mm)', 0.05],
+  ['layerHeightFine_mm', 'Layer height, track zone (mm)', 0.01],
+  ['infillPercent', 'Infill (%)', 5],
+  ['plateSpacing_mm', 'Plate spacing on bed (mm)', 1],
+  ['bedSize_mm', 'Bed size (mm)', 10],
 ]
 const STORE_KEY = 'pcbtape.params.v1'
 
@@ -46,10 +55,21 @@ const isBottom = name => /\.gbl$|b[._]cu|bottom/i.test(name)
 const firstCopper = () => files.find(f => f.type === 'copper') || null
 
 async function addFiles(list) {
+  const entries = []
   for (const f of list) {
-    const text = await f.text()
-    files = files.filter(x => x.name !== f.name)
-    files.push({name: f.name, text, type: detectType(f.name), mirror: isBottom(f.name)})
+    if (/\.zip$/i.test(f.name)) {
+      // EasyEDA / KiCad Gerber export zips
+      const z = unzipSync(new Uint8Array(await f.arrayBuffer()))
+      for (const [path, data] of Object.entries(z)) {
+        const name = path.split('/').pop()
+        if (!name || path.startsWith('__MACOSX') || data.length > 40e6) continue
+        entries.push({name, text: strFromU8(data)})
+      }
+    } else entries.push({name: f.name, text: await f.text()})
+  }
+  for (const {name, text} of entries) {
+    files = files.filter(x => x.name !== name)
+    files.push({name, text, type: detectType(name), mirror: isBottom(name)})
   }
   const rank = f => (f.type !== 'copper' ? 3 : isBottom(f.name) ? 2 : /\.g\d+$|in\d/i.test(f.name) ? 1 : 0)
   files.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
@@ -91,14 +111,18 @@ function renderLayers() {
 function buildParamsForm() {
   const form = $('params')
   form.innerHTML = ''
-  const ml = document.createElement('label')
-  ml.append('Plate style')
-  const ms = document.createElement('select'); ms.dataset.key = 'mode'
-  for (const [v, t] of [['groove', 'Knife groove (single plate)'], ['separate', 'Separate base / tracks / negative']]) {
-    const o = document.createElement('option'); o.value = v; o.textContent = t; ms.append(o)
+  const SELECTS = [
+    ['mode', 'Plate style', [['groove', 'Knife groove (single plate)'], ['separate', 'Separate base / tracks / negative']]],
+    ['infillPattern', 'Infill pattern', [['gyroid', 'Gyroid'], ['grid', 'Grid'], ['rectilinear', 'Rectilinear'], ['honeycomb', 'Honeycomb'], ['cubic', 'Cubic']]],
+  ]
+  for (const [key, label, opts] of SELECTS) {
+    const ml = document.createElement('label')
+    ml.append(label)
+    const ms = document.createElement('select'); ms.dataset.key = key
+    for (const [v, t] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = t; ms.append(o) }
+    ms.onchange = () => { params[key] = ms.value; saveParams(); applyModeUi(); schedule() }
+    ml.append(ms); form.append(ml)
   }
-  ms.onchange = () => { params.mode = ms.value; saveParams(); applyModeUi(); schedule() }
-  ml.append(ms); form.append(ml)
   for (const [key, label, step] of PARAM_UI) {
     const l = document.createElement('label')
     l.append(label)
@@ -125,7 +149,7 @@ function applyModeUi() {
 }
 function syncParams() {
   for (const el of $('params').querySelectorAll('input, select')) {
-    if (el.tagName === 'SELECT') el.value = params.mode
+    if (el.tagName === 'SELECT') el.value = params[el.dataset.key]
     else if (el.type === 'checkbox') el.checked = !!selected?.mirror; else el.value = params[el.dataset.key]
   }
   applyModeUi()
@@ -145,7 +169,7 @@ function parseCached(f) {
 function regenerate() {
   const warn = $('warnings'); warn.innerHTML = ''
   const addWarn = (t, err) => { const li = document.createElement('li'); li.textContent = t; if (err) li.className = 'err'; warn.append(li) }
-  $('export').disabled = true
+  $('export').disabled = true; $('export3mf').disabled = true
   for (const r of results.values()) { r.manifold.delete(); r.neg2d?.delete(); if (r.parts) Object.values(r.parts).forEach(x => x.delete()) }
   results.clear(); result = null
   const coppers = files.filter(f => f.type === 'copper')
@@ -166,6 +190,8 @@ function regenerate() {
       }
     }
     if (!bounds) { addWarn('No copper found.', true); draw2d(); update3d(); return }
+    const rd = params.registrationPinDiameter_mm
+    if (rd > 0 && params.boardMargin_mm < rd + params.registrationClearance_mm + 1.5) addWarn('Board margin is too small for the registration pins; increase it or reduce the pin diameter.')
     const holes = []
     for (const f of files.filter(x => x.type === 'drill')) {
       const r = parseExcellonCached(f)
@@ -173,7 +199,7 @@ function regenerate() {
     }
     for (const {f, cs} of parsed) {
       if (cs.isEmpty()) { addWarn(f.name + ': layer contains no copper.', true); continue }
-      const r = buildPlate(M, cs, bounds, {...params, mirrorX: f.mirror}, holes)
+      const r = buildPlate(M, cs, bounds, {...params, mirrorX: f.mirror}, [...holes, ...regHoles(bounds)])
       if (r.manifold.status() !== 'NoError') addWarn(f.name + ': mesh status ' + r.manifold.status(), true)
       results.set(f, r)
     }
@@ -182,7 +208,7 @@ function regenerate() {
       const pl = result.plate, w = pl.maxX - pl.minX, h = pl.maxY - pl.minY
       $('info').textContent = `${w.toFixed(1)} × ${h.toFixed(1)} mm · ${results.size} layer(s) · ${result.manifold.numTri().toLocaleString()} triangles (selected)`
       if (w > 220 || h > 220) addWarn(`Plate is ${w.toFixed(0)} × ${h.toFixed(0)} mm, larger than a 220 × 220 mm bed.`)
-      $('export').disabled = false
+      $('export').disabled = false; $('export3mf').disabled = false
     }
     renderStackup(parsed, holes)
     draw2d(); update3d()
@@ -256,6 +282,17 @@ function renderStackup(parsed, holes) {
   box.innerHTML = s
 }
 const esc = t => t.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]))
+
+// Registration holes sit in the board margin at three corners (asymmetric: a rotated or flipped plate won't fit).
+// They are in design coordinates and mirrored together with the layer, like the vias.
+function regHoles(bounds) {
+  const d = params.registrationPinDiameter_mm
+  if (!(d > 0)) return []
+  const mg = params.boardMargin_mm, ins = mg / 2
+  const x0 = bounds.minX - mg + ins, x1 = bounds.maxX + mg - ins, y0 = bounds.minY - mg + ins, y1 = bounds.maxY + mg - ins
+  const dia = d + params.registrationClearance_mm
+  return [[x0, y0], [x1, y0], [x0, y1]].map(([x, y]) => ({x, y, d: dia}))
+}
 
 function boundsOf(cs) { const b = cs.bounds(); return {minX: b.min[0], minY: b.min[1], maxX: b.max[0], maxY: b.max[1]} }
 
@@ -378,7 +415,7 @@ for (const b of document.querySelectorAll('nav button')) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b))
     const v3 = b.dataset.view === '3d'
     c3.hidden = !v3; c2d.hidden = v3
-    $('explodeBox').hidden = !v3; $('viewBox').hidden = !v3
+    $('explodeBox').hidden = !v3; $('viewBox').hidden = !v3; $('legend').hidden = !v3
     if (v3) resize3d(); else draw2d()
   }
 }
@@ -396,6 +433,62 @@ function loadExample(key) {
 $('example').onclick = () => loadExample('test')
 $('example4').onclick = () => loadExample('demo4')
 $('reset').onclick = () => { params = {...DEFAULT_PARAMS}; saveParams(); syncParams(); regenerate() }
+function download(blob, name) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob); a.download = name
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+}
+
+/** One 3MF with every plate (and the registration pins) laid out on the bed, plus PrusaSlicer settings. */
+function export3mf() {
+  const {Manifold} = M
+  const items = []
+  const T = params.plateThickness_mm, h = params.trackHeight_mm
+  const grooveD = Math.min(params.grooveDepth_mm, T - 0.4)
+  const base = n => n.replace(/\.[^.]+$/, '')
+  const common = {fill_density: params.infillPercent + '%', fill_pattern: params.infillPattern}
+  const list = files.filter(f => results.has(f))
+  for (const f of list) {
+    const r = results.get(f), n = base(f.name)
+    if (r.mode === 'separate') {
+      items.push({name: n + '_base', man: r.parts.base, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm}})
+      items.push({name: n + '_tracks', man: r.parts.tracks, plate: r.plate, options: {fill_density: '100%', layer_height: params.layerHeightFine_mm}})
+      items.push({name: n + '_negative', man: r.parts.neg, plate: r.plate, options: {fill_density: '100%', layer_height: params.layerHeightFine_mm}})
+    } else {
+      items.push({
+        name: n, man: r.manifold, plate: r.plate, options: {...common, layer_height: params.layerHeightBase_mm},
+        // fine layers only where the groove and tracks are; coarse below
+        ranges: [{min: T - grooveD, max: T + h, options: {layer_height: params.layerHeightFine_mm}}],
+      })
+    }
+  }
+  // shelf-pack onto the bed
+  const sp = params.plateSpacing_mm, bed = params.bedSize_mm
+  let x = sp, y = sp, rowH = 0, overflow = false
+  const placed = []
+  const place = (man, w, d, o) => {
+    if (x + w + sp > bed && x > sp) { x = sp; y += rowH + sp; rowH = 0 }
+    if (y + d + sp > bed || w + 2 * sp > bed) overflow = true
+    placed.push({...o, manifold: man.translate([x, y, 0]), tmp: true})
+    x += w + sp; rowH = Math.max(rowH, d)
+  }
+  for (const it of items) {
+    const w = it.plate.maxX - it.plate.minX, d = it.plate.maxY - it.plate.minY
+    place(it.man.translate([-it.plate.minX, -it.plate.minY, 0]), w, d, {name: it.name, options: it.options, ranges: it.ranges})
+  }
+  const rd = params.registrationPinDiameter_mm
+  if (rd > 0 && list.length) {
+    const L = list.length * (T + h) + 2
+    const pins = Manifold.union([0, 1, 2].map(i => Manifold.cylinder(L, rd / 2, rd / 2, 32).translate([rd / 2 + i * (rd + 2), rd / 2, 0])))
+    place(pins, 3 * rd + 4, rd, {name: 'registration_pins', options: {fill_density: '100%', layer_height: params.layerHeightBase_mm}})
+  }
+  const blob = build3mf(placed)
+  placed.forEach(o => o.manifold.delete())
+  download(blob, 'copper-tape-plates.3mf')
+  if (overflow) alert('Warning: not everything fits on a ' + bed + ' mm bed; some parts overlap the bed edge. Reduce the board margin or print in several jobs.')
+}
+$('export3mf').onclick = export3mf
+
 $('export').onclick = () => {
   if (!result) return
   const a = document.createElement('a')

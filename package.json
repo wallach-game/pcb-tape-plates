@@ -1,6 +1,6 @@
 {
   "name": "pcb-tape-plates",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -16,6 +16,7 @@
   "dependencies": {
     "@tracespace/parser": "^5.0.0-alpha.0",
     "@tracespace/plotter": "^5.0.0-alpha.0",
+    "fflate": "^0.8.3",
     "manifold-3d": "^3.5.4",
     "three": "^0.187.0"
   },

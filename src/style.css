@@ -40,3 +40,6 @@ nav button{background:var(--panel)}nav button.active{border-color:var(--acc)}
 #viewBox label{display:flex;align-items:center;gap:4px;cursor:pointer}
 #viewBox i{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line)}
 nav{flex-wrap:wrap}
+#export{width:100%;margin-top:8px}
+#params select{max-width:170px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}
+#legend[hidden]{display:none}

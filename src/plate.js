@@ -10,6 +10,14 @@ export const DEFAULT_PARAMS = {
   minViaHole_mm: 0.6,
   negativeClearance_mm: 0.2,
   mode: 'groove', // 'groove' = one plate with knife groove; 'separate' = base + tracks + negative parts
+  registrationPinDiameter_mm: 3, // 0 disables pins and holes
+  registrationClearance_mm: 0.2,
+  plateSpacing_mm: 5,
+  bedSize_mm: 220,
+  layerHeightBase_mm: 0.2,
+  layerHeightFine_mm: 0.05,
+  infillPercent: 15,
+  infillPattern: 'gyroid',
   mirrorX: false,
 }
 
