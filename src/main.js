@@ -506,17 +506,15 @@ function export3mf() {
 }
 $('export3mf').onclick = export3mf
 
-// First layer height is a global print setting that a 3MF cannot safely carry, so export a small
-// partial config. Import it once: PrusaSlicer > File > Import > Import Config.
+// First layer height is a global print setting that a 3MF cannot safely carry, so export a one-key partial
+// config. Import it once: PrusaSlicer > File > Import > Import Config. Only this key changes; every other
+// setting of your printer/filament/print profile is left alone. Per-object settings travel in the 3MF.
 $('exportIni').onclick = () => {
   const lines = [
-    '# Copper-tape plates: import with File > Import > Import Config (applies on top of your current profile)',
-    `first_layer_height = ${params.layerHeightFine_mm}`,
-    `layer_height = ${params.layerHeightBase_mm}`,
-    `fill_density = ${params.infillPercent}%`,
-    `fill_pattern = ${params.infillPattern}`,
+    '# Copper-tape plates: changes ONLY the first layer height (File > Import > Import Config)',
+    'first_layer_height = ' + params.layerHeightFine_mm,
   ]
-  download(new Blob([lines.join('\n') + '\n'], {type: 'text/plain'}), 'copper-tape-plates.ini')
+  download(new Blob([lines.join('\n') + '\n'], {type: 'text/plain'}), 'copper-tape-first-layer.ini')
 }
 
 $('export').onclick = () => {
