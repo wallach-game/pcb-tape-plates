@@ -8,6 +8,8 @@ export const DEFAULT_PARAMS = {
   grooveTipWidth_mm: 0.1,
   boardMargin_mm: 5,
   minViaHole_mm: 0.6,
+  negativeClearance_mm: 0.2,
+  mode: 'groove', // 'groove' = one plate with knife groove; 'separate' = base + tracks + negative parts
   mirrorX: false,
 }
 
@@ -30,6 +32,9 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
   const m = p.boardMargin_mm
   const plate = {minX: b.minX - m, minY: b.minY - m, maxX: b.maxX + m, maxY: b.maxY + m}
   const T = p.plateThickness_mm
+  // through holes (design coordinates in; mirrored with the layer so they line up across plates)
+  const hs = holes.map(h => ({x: p.mirrorX ? b.minX + b.maxX - h.x : h.x, y: h.y, d: Math.max(h.d, p.minViaHole_mm)}))
+  if (p.mode === 'separate') return buildSeparate(M, copper, plate, p, hs)
 
   let groove2d = null
   let neg2d = CrossSection.square([plate.maxX - plate.minX, plate.maxY - plate.minY]).translate([plate.minX, plate.minY])
@@ -56,14 +61,34 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
     }
     solid = solid.subtract(Manifold.union(cuts))
   }
-  // through holes (design coordinates in; mirrored with the layer so they line up across plates)
-  const hs = holes.map(h => ({x: p.mirrorX ? b.minX + b.maxX - h.x : h.x, y: h.y, d: Math.max(h.d, p.minViaHole_mm)}))
   if (hs.length) {
     const H = T + p.trackHeight_mm + 2
     const cyl = hs.map(h => Manifold.cylinder(H, h.d / 2, h.d / 2, CIRCLE_SEGMENTS).translate([h.x, h.y, -1]))
     solid = solid.subtract(Manifold.union(cyl))
   }
   return {manifold: solid, copper, groove2d, neg2d, plate, holes: hs, T}
+}
+
+/**
+ * Separate-parts style: flat base, raised-tracks part and negative (filler) part.
+ * Tracks and negative are each trackHeight thick. The negative fills the area where the tape is
+ * peeled away, leaving negativeClearance around the copper. Parts are laid side by side in
+ * manifold (for export); parts.* hold each body at its own origin for assembled preview.
+ */
+function buildSeparate(M, copper, plate, p, hs) {
+  const {Manifold, CrossSection} = M
+  const T = p.plateThickness_mm, h = p.trackHeight_mm, W = p.grooveWidthTop_mm
+  const w = plate.maxX - plate.minX, d = plate.maxY - plate.minY
+  const rect = CrossSection.square([w, d]).translate([plate.minX, plate.minY])
+  const cut = (man, H) => hs.length ? man.subtract(Manifold.union(hs.map(q => Manifold.cylinder(H + 2, q.d / 2, q.d / 2, CIRCLE_SEGMENTS).translate([q.x, q.y, -1])))) : man
+  const base = cut(rect.extrude(T), T)
+  const tracks = cut(copper.extrude(h), h)
+  const neg2d = rect.subtract(copper.offset(p.negativeClearance_mm, 'Round', 2, CIRCLE_SEGMENTS))
+  const neg = cut(neg2d.extrude(h), h)
+  const groove2d = ringAt(M, copper, p.grooveOffset_mm + W / 2, W / 2)
+  const gap = 5
+  const manifold = Manifold.union([base, tracks.translate([w + gap, 0, 0]), neg.translate([2 * (w + gap), 0, 0])])
+  return {manifold, parts: {base, tracks, neg}, copper, groove2d: null, neg2d, plate, holes: hs, T, mode: 'separate'}
 }
 
 /** Binary STL from a manifold. */

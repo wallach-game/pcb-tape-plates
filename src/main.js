@@ -21,6 +21,7 @@ const PARAM_UI = [
   ['grooveTipWidth_mm', 'Groove tip width (mm)', 0.05],
   ['boardMargin_mm', 'Board margin (mm)', 1],
   ['minViaHole_mm', 'Minimum hole diameter (mm)', 0.1],
+  ['negativeClearance_mm', 'Negative clearance to copper (mm)', 0.05],
 ]
 const STORE_KEY = 'pcbtape.params.v1'
 
@@ -90,6 +91,14 @@ function renderLayers() {
 function buildParamsForm() {
   const form = $('params')
   form.innerHTML = ''
+  const ml = document.createElement('label')
+  ml.append('Plate style')
+  const ms = document.createElement('select'); ms.dataset.key = 'mode'
+  for (const [v, t] of [['groove', 'Knife groove (single plate)'], ['separate', 'Separate base / tracks / negative']]) {
+    const o = document.createElement('option'); o.value = v; o.textContent = t; ms.append(o)
+  }
+  ms.onchange = () => { params.mode = ms.value; saveParams(); applyModeUi(); schedule() }
+  ml.append(ms); form.append(ml)
   for (const [key, label, step] of PARAM_UI) {
     const l = document.createElement('label')
     l.append(label)
@@ -105,10 +114,21 @@ function buildParamsForm() {
   l.append(c); form.append(l)
   syncParams()
 }
-function syncParams() {
-  for (const el of $('params').querySelectorAll('input')) {
-    if (el.type === 'checkbox') el.checked = !!selected?.mirror; else el.value = params[el.dataset.key]
+// grey out the parameters that don't apply to the current plate style
+function applyModeUi() {
+  const sep = params.mode === 'separate'
+  const groove = ['grooveOffset_mm', 'grooveWidthTop_mm', 'grooveDepth_mm', 'grooveTipWidth_mm']
+  for (const el of $('params').querySelectorAll('input[type=number]')) {
+    const k = el.dataset.key
+    el.closest('label').style.opacity = (sep && groove.includes(k)) || (!sep && k === 'negativeClearance_mm') ? 0.35 : 1
   }
+}
+function syncParams() {
+  for (const el of $('params').querySelectorAll('input, select')) {
+    if (el.tagName === 'SELECT') el.value = params.mode
+    else if (el.type === 'checkbox') el.checked = !!selected?.mirror; else el.value = params[el.dataset.key]
+  }
+  applyModeUi()
 }
 
 // ---------- generation ----------
@@ -126,7 +146,7 @@ function regenerate() {
   const warn = $('warnings'); warn.innerHTML = ''
   const addWarn = (t, err) => { const li = document.createElement('li'); li.textContent = t; if (err) li.className = 'err'; warn.append(li) }
   $('export').disabled = true
-  for (const r of results.values()) { r.manifold.delete(); r.neg2d?.delete() }
+  for (const r of results.values()) { r.manifold.delete(); r.neg2d?.delete(); if (r.parts) Object.values(r.parts).forEach(x => x.delete()) }
   results.clear(); result = null
   const coppers = files.filter(f => f.type === 'copper')
   if (!M || !selected || !coppers.length) { renderStackup([], []); draw2d(); update3d(); return }
@@ -307,10 +327,19 @@ function update3d() {
     const r = results.get(f), T = r.T
     const group = new THREE.Group()
     const parts = {}
-    parts.plate = new THREE.Mesh(toGeometry(r.manifold), new THREE.MeshStandardMaterial({color: LAYER_COLORS[idx % LAYER_COLORS.length], roughness: 0.7}))
-    parts.copper = slab(r.copper, T, params.trackHeight_mm + 0.02, PART_COLORS.copper)
-    parts.neg = slab(r.neg2d, T, 0.06, PART_COLORS.neg)
-    parts.groove = slab(r.groove2d, T, 0.04, PART_COLORS.groove)
+    const mat = c => new THREE.MeshStandardMaterial({color: c, roughness: 0.7})
+    if (r.mode === 'separate') {
+      // assembled: base, with the tracks part and the negative part sitting on top of it
+      parts.plate = new THREE.Mesh(toGeometry(r.parts.base), mat(LAYER_COLORS[idx % LAYER_COLORS.length]))
+      parts.copper = new THREE.Mesh(toGeometry(r.parts.tracks), mat(PART_COLORS.copper))
+      parts.neg = new THREE.Mesh(toGeometry(r.parts.neg), mat(PART_COLORS.neg))
+      parts.copper.position.z = parts.neg.position.z = T
+    } else {
+      parts.plate = new THREE.Mesh(toGeometry(r.manifold), mat(LAYER_COLORS[idx % LAYER_COLORS.length]))
+      parts.copper = slab(r.copper, T, params.trackHeight_mm + 0.02, PART_COLORS.copper)
+      parts.neg = slab(r.neg2d, T, 0.06, PART_COLORS.neg)
+      parts.groove = slab(r.groove2d, T, 0.04, PART_COLORS.groove)
+    }
     for (const mesh of Object.values(parts)) if (mesh) group.add(mesh)
     scene.add(group)
     meshes.push({group, parts, level: list.length - 1 - idx}) // first listed layer (top) sits highest
@@ -383,5 +412,5 @@ for (const cb of document.querySelectorAll('#viewBox input')) {
 }
 buildParamsForm()
 M = await Module({locateFile: () => wasmUrl}); M.setup()
-{ const q = new URLSearchParams(location.search); if (q.has('example')) loadExample('test'); if (q.has('demo4')) loadExample('demo4') }
+{ const q = new URLSearchParams(location.search); if (q.has('separate')) { params.mode = 'separate'; syncParams() } if (q.has('example')) loadExample('test'); if (q.has('demo4')) loadExample('demo4') }
 if (new URLSearchParams(location.search).has('3d')) { document.querySelector('nav button[data-view="3d"]').click(); if (new URLSearchParams(location.search).has('exploded')) { explodeTarget = 12; explodeSlider.value = 12 } }
