@@ -28,7 +28,8 @@
 
   <button id="export3mf" type="button" class="primary" disabled>Export 3MF (all layers, PrusaSlicer)</button>
   <button id="export" type="button" disabled>Export STL (selected layer)</button>
-  <p class="muted">In PrusaSlicer set <b>first layer height</b> equal to your fine layer height (e.g. 0.06 mm). It is a global setting, so the 3MF cannot carry it.</p>
+  <button id="exportIni" type="button" style="width:100%;margin-top:8px">Export PrusaSlicer settings (.ini)</button>
+  <p class="muted">First layer height is a global slicer setting the 3MF cannot carry. Import this .ini once (File &gt; Import &gt; Import Config) to get the thin first layer, then open the 3MF.</p>
   <ul id="warnings"></ul>
   <p class="muted">Everything runs in your browser; files are never uploaded.</p>
 </aside>
