@@ -481,6 +481,11 @@ function loadExample(key) {
 }
 $('example').onclick = () => loadExample('test')
 $('example4').onclick = () => loadExample('demo4')
+$('stockPreset').onclick = () => {
+  // plate thickness = the stock 0.2 mm first layer, so no slicer change is needed
+  Object.assign(params, {plateThickness_mm: 0.2, trackHeight_mm: 0.18, layerHeightBase_mm: 0.2, layerHeightFine_mm: 0.06, mode: 'separate'})
+  saveParams(); syncParams(); regenerate()
+}
 $('reset').onclick = () => { params = {...DEFAULT_PARAMS}; saveParams(); syncParams(); regenerate() }
 // "key = value" lines -> per-object PrusaSlicer settings applied to every object (override the defaults above)
 function parseExtraSettings(text = '') {
