@@ -35,3 +35,8 @@ nav button{background:var(--panel)}nav button.active{border-color:var(--acc)}
 #legend:empty{display:none}
 #legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
 #stackup svg{display:block;margin-bottom:6px}.vias{margin:4px 0}.vias li{padding:1px 0}
+#viewBox{display:flex;gap:10px;align-items:center;background:var(--panel);padding:5px 8px;border-radius:6px;font-size:12px;flex-wrap:wrap}
+#viewBox[hidden]{display:none}
+#viewBox label{display:flex;align-items:center;gap:4px;cursor:pointer}
+#viewBox i{display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid var(--line)}
+nav{flex-wrap:wrap}

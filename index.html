@@ -36,6 +36,12 @@
     <button data-view="3d">3D plate</button>
     <span id="explodeBox" hidden><button id="explodeBtn" type="button">Explode / collapse</button>
       <input id="explode" type="range" min="0" max="40" step="0.5" value="0" title="Layer separation (mm)"></span>
+    <span id="viewBox" hidden>
+      <label><input type="checkbox" data-part="plate"> Plate</label>
+      <label><input type="checkbox" data-part="copper"><i style="background:#e8892b"></i>Copper</label>
+      <label><input type="checkbox" data-part="neg"><i style="background:#19c3b1"></i>Negative (peel)</label>
+      <label><input type="checkbox" data-part="groove"><i style="background:#15171b"></i>Groove</label>
+    </span>
     <span id="info"></span>
   </nav>
   <canvas id="c2d"></canvas>

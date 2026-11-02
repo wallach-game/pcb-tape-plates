@@ -32,6 +32,7 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
   const T = p.plateThickness_mm
 
   let groove2d = null
+  let neg2d = CrossSection.square([plate.maxX - plate.minX, plate.maxY - plate.minY]).translate([plate.minX, plate.minY])
   let solid = Manifold.cube([plate.maxX - plate.minX, plate.maxY - plate.minY, T]).translate([plate.minX, plate.minY, 0])
   if (!copper.isEmpty()) {
     solid = solid.add(copper.extrude(p.trackHeight_mm).translate([0, 0, T]))
@@ -43,6 +44,8 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
     const tip = Math.max(0.01, p.grooveTipWidth_mm / 2)
     const cuts = []
     groove2d = ringAt(M, copper, c, W / 2)
+    // negative = everything outside the groove: the tape that gets peeled away
+    neg2d = neg2d.subtract(copper.offset(p.grooveOffset_mm + W, 'Round', 2, CIRCLE_SEGMENTS))
     for (let i = 0; i < steps; i++) {
       const z0 = T - (D * (i + 1)) / steps
       const mid = (i + 0.5) / steps
@@ -60,7 +63,7 @@ export function buildPlate(M, copperIn, bounds, p, holes = []) {
     const cyl = hs.map(h => Manifold.cylinder(H, h.d / 2, h.d / 2, CIRCLE_SEGMENTS).translate([h.x, h.y, -1]))
     solid = solid.subtract(Manifold.union(cyl))
   }
-  return {manifold: solid, copper, groove2d, plate, holes: hs}
+  return {manifold: solid, copper, groove2d, neg2d, plate, holes: hs, T}
 }
 
 /** Binary STL from a manifold. */

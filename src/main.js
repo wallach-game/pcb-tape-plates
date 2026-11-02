@@ -126,7 +126,7 @@ function regenerate() {
   const warn = $('warnings'); warn.innerHTML = ''
   const addWarn = (t, err) => { const li = document.createElement('li'); li.textContent = t; if (err) li.className = 'err'; warn.append(li) }
   $('export').disabled = true
-  for (const r of results.values()) r.manifold.delete()
+  for (const r of results.values()) { r.manifold.delete(); r.neg2d?.delete() }
   results.clear(); result = null
   const coppers = files.filter(f => f.type === 'copper')
   if (!M || !selected || !coppers.length) { renderStackup([], []); draw2d(); update3d(); return }
@@ -280,21 +280,42 @@ const LAYER_COLORS = [0xd9a066, 0x7fb3d5, 0x9ccc7a, 0xc792ea, 0xe5c07b, 0x66c2b0
 let meshes = [], fitted = false, explode = 0, explodeTarget = 0
 const explodeSlider = $('explode')
 
+const vis = {plate: true, copper: true, neg: true, groove: false}
+const PART_COLORS = {copper: 0xe8892b, neg: 0x19c3b1, groove: 0x15171b}
+
+function toGeometry(man) {
+  const mm = man.getMesh()
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(mm.vertProperties.slice(), mm.numProp))
+  geo.setIndex(new THREE.BufferAttribute(mm.triVerts.slice(), 1))
+  const flat = geo.toNonIndexed(); flat.computeVertexNormals()
+  return flat
+}
+function slab(cs, z0, h, color) {
+  if (!cs || cs.isEmpty()) return null
+  const man = cs.extrude(h).translate([0, 0, z0])
+  const mesh = new THREE.Mesh(toGeometry(man), new THREE.MeshStandardMaterial({color, roughness: 0.6}))
+  man.delete()
+  return mesh
+}
+
 function update3d() {
-  for (const o of meshes) { scene.remove(o.mesh); o.mesh.geometry.dispose() }
+  for (const o of meshes) { scene.remove(o.group); o.group.traverse(x => x.geometry?.dispose()) }
   meshes = []
   const list = files.filter(f => results.has(f))
   list.forEach((f, idx) => {
-    const mm = results.get(f).manifold.getMesh()
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(mm.vertProperties.slice(), mm.numProp))
-    geo.setIndex(new THREE.BufferAttribute(mm.triVerts.slice(), 1))
-    const flat = geo.toNonIndexed(); flat.computeVertexNormals()
-    const mesh = new THREE.Mesh(flat, new THREE.MeshStandardMaterial({color: LAYER_COLORS[idx % LAYER_COLORS.length], roughness: 0.7}))
-    scene.add(mesh)
-    meshes.push({mesh, level: list.length - 1 - idx}) // first listed layer (top) sits highest
+    const r = results.get(f), T = r.T
+    const group = new THREE.Group()
+    const parts = {}
+    parts.plate = new THREE.Mesh(toGeometry(r.manifold), new THREE.MeshStandardMaterial({color: LAYER_COLORS[idx % LAYER_COLORS.length], roughness: 0.7}))
+    parts.copper = slab(r.copper, T, params.trackHeight_mm + 0.02, PART_COLORS.copper)
+    parts.neg = slab(r.neg2d, T, 0.06, PART_COLORS.neg)
+    parts.groove = slab(r.groove2d, T, 0.04, PART_COLORS.groove)
+    for (const mesh of Object.values(parts)) if (mesh) group.add(mesh)
+    scene.add(group)
+    meshes.push({group, parts, level: list.length - 1 - idx}) // first listed layer (top) sits highest
   })
-  applyExplode()
+  applyExplode(); applyVisibility()
   if (!fitted && result) {
     const pl = result.plate, cx = (pl.minX + pl.maxX) / 2, cy = (pl.minY + pl.maxY) / 2
     controls.target.set(cx, cy, 8)
@@ -303,9 +324,12 @@ function update3d() {
   }
   renderLegend(list)
 }
+function applyVisibility() {
+  for (const o of meshes) for (const [k, mesh] of Object.entries(o.parts)) if (mesh) mesh.visible = vis[k]
+}
 function applyExplode() {
   const pitch = params.plateThickness_mm + params.trackHeight_mm
-  for (const o of meshes) o.mesh.position.z = o.level * (pitch + explode)
+  for (const o of meshes) o.group.position.z = o.level * (pitch + explode)
 }
 function renderLegend(list) {
   $('legend').innerHTML = list.map((f, i) => '<span><i style="background:#' + LAYER_COLORS[i % LAYER_COLORS.length].toString(16).padStart(6, '0') + '"></i>' + f.name + (f.mirror ? ' (mirrored)' : '') + '</span>').join('')
@@ -325,7 +349,7 @@ for (const b of document.querySelectorAll('nav button')) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b))
     const v3 = b.dataset.view === '3d'
     c3.hidden = !v3; c2d.hidden = v3
-    $('explodeBox').hidden = !v3
+    $('explodeBox').hidden = !v3; $('viewBox').hidden = !v3
     if (v3) resize3d(); else draw2d()
   }
 }
@@ -353,6 +377,10 @@ $('export').onclick = () => {
 
 explodeSlider.oninput = () => { explodeTarget = parseFloat(explodeSlider.value) }
 $('explodeBtn').onclick = () => { explodeTarget = explodeTarget > 0 ? 0 : 15; explodeSlider.value = explodeTarget }
+for (const cb of document.querySelectorAll('#viewBox input')) {
+  cb.checked = vis[cb.dataset.part]
+  cb.onchange = () => { vis[cb.dataset.part] = cb.checked; applyVisibility() }
+}
 buildParamsForm()
 M = await Module({locateFile: () => wasmUrl}); M.setup()
 { const q = new URLSearchParams(location.search); if (q.has('example')) loadExample('test'); if (q.has('demo4')) loadExample('demo4') }
