@@ -23,6 +23,7 @@ const PARAM_UI = [
 const STORE_KEY = 'pcbtape.params.v1'
 
 let M, files = [], selected = null, params = loadParams(), result = null
+const results = new Map() // copper file -> plate result
 
 function loadParams() {
   try { return {...DEFAULT_PARAMS, ...JSON.parse(localStorage.getItem(STORE_KEY) || '{}')} } catch { return {...DEFAULT_PARAMS} }
@@ -45,13 +46,12 @@ async function addFiles(list) {
   for (const f of list) {
     const text = await f.text()
     files = files.filter(x => x.name !== f.name)
-    files.push({name: f.name, text, type: detectType(f.name)})
+    files.push({name: f.name, text, type: detectType(f.name), mirror: isBottom(f.name)})
   }
   const rank = f => (f.type !== 'copper' ? 3 : isBottom(f.name) ? 2 : /.gd+$|ind/i.test(f.name) ? 1 : 0)
   files.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
   if (!files.includes(selected)) {
     selected = firstCopper()
-    if (selected) params.mirrorX = isBottom(selected.name)
   }
   syncParams()
   renderLayers()
@@ -67,7 +67,7 @@ function renderLayers() {
     const radio = document.createElement('input')
     radio.type = 'radio'; radio.name = 'sel'; radio.disabled = f.type !== 'copper'
     radio.checked = f === selected
-    radio.onchange = () => { selected = f; params.mirrorX = isBottom(f.name); syncParams(); regenerate() }
+    radio.onchange = () => { selected = f; syncParams(); regenerate() }
     const name = document.createElement('span'); name.className = 'name'; name.textContent = f.name; name.title = f.name
     const sel = document.createElement('select')
     for (const t of ['copper', 'outline', 'drill', 'ignore']) {
@@ -102,16 +102,15 @@ function buildParamsForm() {
     l.append(i); form.append(l)
   }
   const l = document.createElement('label')
-  l.append('Mirror X (bottom layers)')
+  l.append('Mirror X (selected layer)')
   const c = document.createElement('input'); c.type = 'checkbox'; c.dataset.key = 'mirrorX'
-  c.onchange = () => { params.mirrorX = c.checked; saveParams(); schedule() }
+  c.onchange = () => { if (selected) selected.mirror = c.checked; schedule() }
   l.append(c); form.append(l)
   syncParams()
 }
 function syncParams() {
   for (const el of $('params').querySelectorAll('input')) {
-    const v = params[el.dataset.key]
-    if (el.type === 'checkbox') el.checked = !!v; else el.value = v
+    if (el.type === 'checkbox') el.checked = !!selected?.mirror; else el.value = params[el.dataset.key]
   }
 }
 
@@ -130,35 +129,45 @@ function regenerate() {
   const warn = $('warnings'); warn.innerHTML = ''
   const addWarn = (t, err) => { const li = document.createElement('li'); li.textContent = t; if (err) li.className = 'err'; warn.append(li) }
   $('export').disabled = true
-  if (!M || !selected) { result = null; draw2d(); return }
+  for (const r of results.values()) r.manifold.delete()
+  results.clear(); result = null
+  const coppers = files.filter(f => f.type === 'copper')
+  if (!M || !selected || !coppers.length) { draw2d(); update3d(); return }
   try {
-    const {cs, warnings} = parseCached(selected)
-    warnings.forEach(w => addWarn(w))
-    if (cs.isEmpty()) { addWarn('This layer contains no copper.', true); result = null; draw2d(); return }
-    const bb = cs.bounds()
-    let bounds = {minX: bb.min[0], minY: bb.min[1], maxX: bb.max[0], maxY: bb.max[1]}
+    const parsed = coppers.map(f => ({f, ...parseCached(f)}))
+    parsed.forEach(({f, warnings}) => warnings.forEach(w => addWarn((coppers.length > 1 ? f.name + ': ' : '') + w)))
+    // one shared board rectangle so every plate has the same footprint
+    let bounds = null
     const outline = files.find(f => f.type === 'outline')
-    if (outline) {
-      const oc = parseCached(outline).cs
-      if (!oc.isEmpty()) {
-        const ob = oc.bounds()
-        bounds = {minX: ob.min[0], minY: ob.min[1], maxX: ob.max[0], maxY: ob.max[1]}
+    if (outline && !parseCached(outline).cs.isEmpty()) bounds = boundsOf(parseCached(outline).cs)
+    else {
+      addWarn('No board outline layer: plate size is based on the copper extents.')
+      for (const {cs} of parsed) {
+        if (cs.isEmpty()) continue
+        const b = boundsOf(cs)
+        bounds = bounds ? {minX: Math.min(bounds.minX, b.minX), minY: Math.min(bounds.minY, b.minY), maxX: Math.max(bounds.maxX, b.maxX), maxY: Math.max(bounds.maxY, b.maxY)} : b
       }
-    } else addWarn('No board outline layer: plate size is based on the copper extents.')
-    result?.manifold.delete()
-    result = buildPlate(M, cs, bounds, params)
-    const m = result.manifold
-    if (m.status() !== 'NoError') addWarn('Mesh status: ' + m.status(), true)
-    const pl = result.plate
-    const w = pl.maxX - pl.minX, h = pl.maxY - pl.minY
-    $('info').textContent = `${w.toFixed(1)} × ${h.toFixed(1)} mm · ${m.numTri().toLocaleString()} triangles`
-    if (w > 220 || h > 220) addWarn(`Plate is ${w.toFixed(0)} × ${h.toFixed(0)} mm, larger than a 220 × 220 mm bed.`)
-    $('export').disabled = false
+    }
+    if (!bounds) { addWarn('No copper found.', true); draw2d(); update3d(); return }
+    for (const {f, cs} of parsed) {
+      if (cs.isEmpty()) { addWarn(f.name + ': layer contains no copper.', true); continue }
+      const r = buildPlate(M, cs, bounds, {...params, mirrorX: f.mirror})
+      if (r.manifold.status() !== 'NoError') addWarn(f.name + ': mesh status ' + r.manifold.status(), true)
+      results.set(f, r)
+    }
+    result = results.get(selected) || null
+    if (result) {
+      const pl = result.plate, w = pl.maxX - pl.minX, h = pl.maxY - pl.minY
+      $('info').textContent = `${w.toFixed(1)} × ${h.toFixed(1)} mm · ${results.size} layer(s) · ${result.manifold.numTri().toLocaleString()} triangles (selected)`
+      if (w > 220 || h > 220) addWarn(`Plate is ${w.toFixed(0)} × ${h.toFixed(0)} mm, larger than a 220 × 220 mm bed.`)
+      $('export').disabled = false
+    }
     draw2d(); update3d()
   } catch (e) {
     console.error(e); addWarn('Failed: ' + e.message, true); result = null; draw2d()
   }
 }
+function boundsOf(cs) { const b = cs.bounds(); return {minX: b.min[0], minY: b.min[1], maxX: b.max[0], maxY: b.max[1]} }
 
 // ---------- 2D preview ----------
 const c2d = $('c2d')
@@ -182,7 +191,7 @@ function draw2d() {
   if (result.groove2d) { path(result.groove2d.toPolygons()); g.fillStyle = '#0b0c0e'; g.fill('evenodd') }
   path(result.copper.toPolygons()); g.fillStyle = '#d9822b'; g.fill('evenodd')
   g.fillStyle = '#8b919c'; g.font = '12px system-ui'
-  g.fillText(params.mirrorX ? 'Mirrored (as printed, viewed from above)' : 'As designed (viewed from above)', 12, H - 12)
+  g.fillText(selected?.mirror ? 'Mirrored (as printed, viewed from above)' : 'As designed (viewed from above)', 12, H - 12)
 }
 
 // ---------- 3D preview ----------
@@ -195,30 +204,48 @@ camera.up.set(0, 0, 1)
 const controls = new OrbitControls(camera, renderer.domElement)
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.6))
 const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(-50, -80, 120); scene.add(dl)
-let mesh3d = null, fitted = false
+const LAYER_COLORS = [0xd9a066, 0x7fb3d5, 0x9ccc7a, 0xc792ea, 0xe5c07b, 0x66c2b0]
+let meshes = [], fitted = false, explode = 0, explodeTarget = 0
+const explodeSlider = $('explode')
 
 function update3d() {
-  if (mesh3d) { scene.remove(mesh3d); mesh3d.geometry.dispose() }
-  const mm = result.manifold.getMesh()
-  const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(mm.vertProperties.slice(), mm.numProp))
-  geo.setIndex(new THREE.BufferAttribute(mm.triVerts.slice(), 1))
-  const flat = geo.toNonIndexed(); flat.computeVertexNormals()
-  mesh3d = new THREE.Mesh(flat, new THREE.MeshStandardMaterial({color: 0xc9a27a, roughness: 0.7}))
-  scene.add(mesh3d)
-  if (!fitted) {
+  for (const o of meshes) { scene.remove(o.mesh); o.mesh.geometry.dispose() }
+  meshes = []
+  const list = files.filter(f => results.has(f))
+  list.forEach((f, idx) => {
+    const mm = results.get(f).manifold.getMesh()
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(mm.vertProperties.slice(), mm.numProp))
+    geo.setIndex(new THREE.BufferAttribute(mm.triVerts.slice(), 1))
+    const flat = geo.toNonIndexed(); flat.computeVertexNormals()
+    const mesh = new THREE.Mesh(flat, new THREE.MeshStandardMaterial({color: LAYER_COLORS[idx % LAYER_COLORS.length], roughness: 0.7}))
+    scene.add(mesh)
+    meshes.push({mesh, level: list.length - 1 - idx}) // first listed layer (top) sits highest
+  })
+  applyExplode()
+  if (!fitted && result) {
     const pl = result.plate, cx = (pl.minX + pl.maxX) / 2, cy = (pl.minY + pl.maxY) / 2
-    controls.target.set(cx, cy, 0)
-    camera.position.set(cx, cy - (pl.maxY - pl.minY) * 1.2, (pl.maxX - pl.minX) * 1.1)
+    controls.target.set(cx, cy, 8)
+    camera.position.set(cx, cy - (pl.maxY - pl.minY) * 1.8, (pl.maxX - pl.minX) * 1.1 + 40)
     fitted = true
   }
+  renderLegend(list)
+}
+function applyExplode() {
+  const pitch = params.plateThickness_mm + params.trackHeight_mm
+  for (const o of meshes) o.mesh.position.z = o.level * (pitch + explode)
+}
+function renderLegend(list) {
+  $('legend').innerHTML = list.map((f, i) => '<span><i style="background:#' + LAYER_COLORS[i % LAYER_COLORS.length].toString(16).padStart(6, '0') + '"></i>' + f.name + (f.mirror ? ' (mirrored)' : '') + '</span>').join('')
 }
 function resize3d() {
   const w = c3.clientWidth, h = c3.clientHeight
   if (!w || !h) return
   renderer.setPixelRatio(devicePixelRatio); renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix()
 }
-renderer.setAnimationLoop(() => { if (!c3.hidden) { controls.update(); renderer.render(scene, camera) } })
+renderer.setAnimationLoop(() => {
+  if (Math.abs(explode - explodeTarget) > 0.01) { explode += (explodeTarget - explode) * 0.15; applyExplode() }
+  if (!c3.hidden) { controls.update(); renderer.render(scene, camera) } })
 
 // ---------- UI wiring ----------
 for (const b of document.querySelectorAll('nav button')) {
@@ -226,6 +253,7 @@ for (const b of document.querySelectorAll('nav button')) {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b))
     const v3 = b.dataset.view === '3d'
     c3.hidden = !v3; c2d.hidden = v3
+    $('explodeBox').hidden = !v3
     if (v3) resize3d(); else draw2d()
   }
 }
@@ -242,7 +270,7 @@ function loadExample(key) {
 }
 $('example').onclick = () => loadExample('test')
 $('example4').onclick = () => loadExample('demo4')
-$('reset').onclick = () => { params = {...DEFAULT_PARAMS, mirrorX: params.mirrorX}; saveParams(); syncParams(); regenerate() }
+$('reset').onclick = () => { params = {...DEFAULT_PARAMS}; saveParams(); syncParams(); regenerate() }
 $('export').onclick = () => {
   if (!result) return
   const a = document.createElement('a')
@@ -251,6 +279,9 @@ $('export').onclick = () => {
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 }
 
+explodeSlider.oninput = () => { explodeTarget = parseFloat(explodeSlider.value) }
+$('explodeBtn').onclick = () => { explodeTarget = explodeTarget > 0 ? 0 : 15; explodeSlider.value = explodeTarget }
 buildParamsForm()
 M = await Module({locateFile: () => wasmUrl}); M.setup()
 { const q = new URLSearchParams(location.search); if (q.has('example')) loadExample('test'); if (q.has('demo4')) loadExample('demo4') }
+if (new URLSearchParams(location.search).has('3d')) { document.querySelector('nav button[data-view="3d"]').click(); if (new URLSearchParams(location.search).has('exploded')) { explodeTarget = 12; explodeSlider.value = 12 } }

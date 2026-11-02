@@ -31,10 +31,13 @@
   <nav>
     <button data-view="2d" class="active">2D copper</button>
     <button data-view="3d">3D plate</button>
+    <span id="explodeBox" hidden><button id="explodeBtn" type="button">Explode / collapse</button>
+      <input id="explode" type="range" min="0" max="40" step="0.5" value="0" title="Layer separation (mm)"></span>
     <span id="info"></span>
   </nav>
   <canvas id="c2d"></canvas>
   <div id="c3d" hidden></div>
+  <div id="legend"></div>
 </main>
 <script type="module" src="/src/main.js"></script>
 </body>

@@ -24,11 +24,8 @@ function ringAt(M, copper, c, h) {
 export function buildPlate(M, copperIn, bounds, p) {
   const {Manifold, CrossSection} = M
   let copper = copperIn
-  let b = {...bounds}
-  if (p.mirrorX) {
-    copper = copper.mirror([1, 0])
-    b = {minX: -bounds.maxX, maxX: -bounds.minX, minY: bounds.minY, maxY: bounds.maxY}
-  }
+  const b = {...bounds}
+  if (p.mirrorX) copper = copper.mirror([1, 0]).translate([b.minX + b.maxX, 0]) // mirror about the board's center line, so all plates share one footprint
   const m = p.boardMargin_mm
   const plate = {minX: b.minX - m, minY: b.minY - m, maxX: b.maxX + m, maxY: b.maxY + m}
   const T = p.plateThickness_mm
